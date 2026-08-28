@@ -140,7 +140,7 @@ else:
     df_filt_diario = df_diario.copy()
     df_filt_dist = df_dist.copy()
     df_filt_sat = df_sat.copy()
-    st.subheader("Resultados Globales Nacionales")
+    st.subheader("Resultados Regionales")
 
 # --- 5. ORGANIZACIÓN EN PESTAÑAS (TABS) ---
 tab1, tab2, tab3 = st.tabs(["📅 Monitoreo Diario", "📈 Desempeño Distritales", "⭐ Satisfacción COT a Distrital"])
