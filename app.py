@@ -8,7 +8,7 @@ import re
 # ==========================================
 # 1. CONFIGURACIÓN INICIAL Y CONEXIÓN
 # ==========================================
-st.set_page_config(layout="wide", page_title="Dashboard Territorial", page_icon="📊")
+st.set_page_config(layout="wide", page_title="Dashboard Territorial - MORENA", page_icon="🇲🇽")
 
 if not firebase_admin._apps:
     try:
@@ -31,7 +31,6 @@ def cargar_datos_cuantitativos():
     try:
         df = pd.read_csv(URL_EXCEL_CUANTITATIVO)
         
-        # Búsqueda dinámica de encabezados reales
         if 'Estructura' not in df.columns:
             for i, row in df.head(15).iterrows():
                 row_str = [str(x) for x in row.values]
@@ -40,7 +39,6 @@ def cargar_datos_cuantitativos():
                     df = df.iloc[i+1:].reset_index(drop=True)
                     break
                     
-        # Limpiar saltos de línea (\n) y dobles espacios de los títulos
         df.columns = df.columns.astype(str).str.replace('\n', ' ', regex=False).str.replace(r'\s+', ' ', regex=True).str.strip()
         
         if 'Distrito Federal' in df.columns:
@@ -60,9 +58,10 @@ def cargar_datos_cuantitativos():
                     df[col] = df[col].astype(str).str.replace(',', '')
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 
-        for col_tend in ['TENDENCIA SEMANA 3', 'TENDENCIA S38']:
+        # Limpieza de textos de tendencia oficiales del Excel
+        for col_tend in ['TENDENCIA SEMANA 3', 'TENDENCIA S38', 'TENDENCIA S372']:
             if col_tend in df.columns:
-                df[col_tend] = df[col_tend].fillna('Sin Registro').astype(str)
+                df[col_tend] = df[col_tend].fillna('Sin Registro').astype(str).str.strip()
             
         return df
     except Exception as e:
@@ -105,7 +104,6 @@ def cargar_datos_cualitativos_distritales():
             d = doc.to_dict()
             raw = d.get('raw', {})
             
-            # ---> EXTRACCIÓN INTELIGENTE DEL DISTRITO (Soporta "PUEBLA_3", "3", etc.) <---
             dist_raw = str(d.get('distrito', ''))
             match = re.search(r'_(\d+)$', dist_raw)
             if match:
@@ -115,7 +113,6 @@ def cargar_datos_cualitativos_distritales():
                 if dist_limpio.replace('.','',1).isdigit():
                     dist_limpio = str(int(float(dist_limpio)))
 
-            # ---> LIMPIEZA DEL NOMBRE (Soporta "Distrito 3 - CRISTELA SANTIAGO" -> "CRISTELA SANTIAGO") <---
             evaluado_raw = str(d.get('evaluado', '')).upper().strip()
             if '-' in evaluado_raw:
                 evaluado_limpio = evaluado_raw.split('-')[-1].strip()
@@ -171,9 +168,16 @@ else:
 col_s1 = 'TOTAL S36' if 'TOTAL S36' in df_master.columns else ('Total semana 1' if 'Total semana 1' in df_master.columns else None)
 col_s2 = 'TOTAL S37' if 'TOTAL S37' in df_master.columns else ('Total semanal 2' if 'Total semanal 2' in df_master.columns else None)
 col_s3 = 'TOTAL S38' if 'TOTAL S38' in df_master.columns else ('Total semanal 3' if 'Total semanal 3' in df_master.columns else None)
-col_tendencia = 'TENDENCIA S38' if 'TENDENCIA S38' in df_master.columns else ('TENDENCIA SEMANA 3' if 'TENDENCIA SEMANA 3' in df_master.columns else None)
 
-# Limpieza de Estados y rescate de celdas vacías en "Estructura"
+if 'TENDENCIA S38' in df_master.columns:
+    col_tendencia = 'TENDENCIA S38'
+elif 'TENDENCIA S372' in df_master.columns:
+    col_tendencia = 'TENDENCIA S372'
+elif 'TENDENCIA SEMANA 3' in df_master.columns:
+    col_tendencia = 'TENDENCIA SEMANA 3'
+else:
+    col_tendencia = None
+
 if not df_master.empty and 'Estado' in df_master.columns:
     df_master = df_master[~df_master['Estado'].astype(str).str.strip().isin(['0', '0.0', 'nan', 'NaN', ''])]
 
@@ -184,9 +188,18 @@ if 'Distrito' in df_master.columns:
     df_master['Distrito'] = df_master['Distrito'].apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
 
 # ==========================================
-# 3. FILTROS EN CASCADA
+# 3. FILTROS EN CASCADA CON ESTILO MORENA
 # ==========================================
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/commons/thumb/b/b8/Morena_logo_%28Mexico%29.svg/2560px-Morena_logo_%28Mexico%29.svg.png", width=150)
+st.sidebar.markdown(
+    """
+    <div style="text-align: center; padding: 10px 0 20px 0;">
+        <h1 style="color: #880615; font-size: 2.2rem; font-weight: 800; margin: 0; line-height: 1;">morena</h1>
+        <p style="color: #6b7280; font-size: 0.9rem; margin-top: 4px; font-weight: 500;">La esperanza de México</p>
+    </div>
+    """, 
+    unsafe_allow_html=True
+)
+
 st.sidebar.header("📍 Buscador Operativo")
 
 if not df_master.empty:
@@ -218,10 +231,15 @@ if not df_master.empty:
     
     sel_persona = "Todos"
     if sel_estado != "Todos" and 'Nombres' in df_master.columns:
-        nombres_disponibles = ["Todos"] + sorted(df_master['Nombres'].dropna().astype(str).unique().tolist())
-        sel_persona = st.sidebar.selectbox("Busca el nombre de un perfil:", nombres_disponibles)
-        if sel_persona != "Todos":
-            df_master = df_master[df_master['Nombres'].astype(str) == sel_persona]
+        df_master['Filtro_Nombre_Visual'] = df_master['Nombres'].astype(str).str.upper().str.strip() + " (D" + df_master['Distrito'].astype(str) + ")"
+        nombres_disponibles = ["Todos"] + sorted(df_master['Filtro_Nombre_Visual'].dropna().unique().tolist())
+        sel_persona_visual = st.sidebar.selectbox("Busca el nombre de un perfil:", nombres_disponibles)
+        
+        if sel_persona_visual != "Todos":
+            df_master = df_master[df_master['Filtro_Nombre_Visual'] == sel_persona_visual]
+            sel_persona = sel_persona_visual
+        else:
+            sel_persona = "Todos"
     elif 'Nombres' not in df_master.columns:
         st.sidebar.warning("Columna 'Nombres' no detectada en el Excel.")
     else:
@@ -237,6 +255,9 @@ if df_master.empty:
 else:
     tab_cots, tab_distritales = st.tabs(["👥 Operación por COT", "👑 Análisis de Enlaces Distritales"])
 
+    # ----------------------------------------------------
+    # TAB 1: RENDIMIENTO DE COTs
+    # ----------------------------------------------------
     with tab_cots:
         if sel_persona != "Todos":
             st.subheader(f"Radiografía de: {sel_persona}")
@@ -244,6 +265,19 @@ else:
             distrito_limpio = str(datos_perfil.get('Distrito', 'N/A'))
             st.caption(f"📍 **Estado:** {datos_perfil.get('Estado', 'N/A')} | **Distrito:** {distrito_limpio}")
             
+            telefono_raw = str(datos_perfil.get('Telefono', ''))
+            telefono_limpio = re.sub(r'\D', '', telefono_raw)
+            
+            if len(telefono_limpio) >= 10:
+                if not telefono_limpio.startswith('52'):
+                    telefono_limpio = '52' + telefono_limpio
+                url_whatsapp = f"https://wa.me/{telefono_limpio}"
+                st.markdown(f'<a href="{url_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:8px 16px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">💬 Contactar por WhatsApp ({telefono_raw})</button></a>', unsafe_allow_html=True)
+            else:
+                st.info("ℹ️ Teléfono no disponible para enlace directo de WhatsApp.")
+
+            st.write("")
+
             kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
             meta_val = datos_perfil.get(col_meta, 0) if col_meta else 0
             conv_val = datos_perfil.get(col_conv, 0) if col_conv else 0
@@ -260,7 +294,7 @@ else:
             if col_s1 and col_s2 and col_s3:
                 col_tl_chart, col_tl_info = st.columns([2, 1])
                 datos_tiempo = {
-                    'Semana': ['Semana 1', 'Semana 2', 'Semana Actual'],
+                    'Semana': ['Semana 36', 'Semana 37', 'Semana 38'],
                     'Registros Validados': [
                         datos_perfil.get(col_s1, 0),
                         datos_perfil.get(col_s2, 0),
@@ -276,9 +310,9 @@ else:
                     st.markdown("**Resumen de Avance**")
                     crecimiento = datos_perfil.get(col_s3, 0) - datos_perfil.get(col_s1, 0)
                     if crecimiento > 0:
-                        st.success(f"Crecimiento neto de **+{crecimiento:,.0f}** convencidos.")
+                        st.success(f"Crecimiento neto de **+{crecimiento:,.0f}** registros.")
                     elif crecimiento < 0:
-                        st.error(f"Caída neta de **{crecimiento:,.0f}** convencidos.")
+                        st.error(f"Caída neta de **{crecimiento:,.0f}** registros.")
                     else:
                         st.info("Sin variaciones.")
             else:
@@ -318,12 +352,12 @@ else:
             st.divider()
             
             st.markdown("### 📈 Tendencia de Rendimiento Global (Evolución Semanal)")
-            st.caption("Muestra el ritmo de captura de convencidos de toda la región seleccionada a lo largo del tiempo.")
+            st.caption("Ritmo de captura consolidado a lo largo del periodo.")
             if col_s1 and col_s2 and col_s3:
                 df_tendencia_global = pd.DataFrame({
-                    'Semana 1': [df_master[col_s1].sum()],
-                    'Semana 2': [df_master[col_s2].sum()],
-                    'Semana Actual': [df_master[col_s3].sum()]
+                    'Semana 36': [df_master[col_s1].sum()],
+                    'Semana 37': [df_master[col_s2].sum()],
+                    'Semana 38': [df_master[col_s3].sum()]
                 }).T
                 df_tendencia_global.columns = ['Registros Validados']
                 st.line_chart(df_tendencia_global, color='#880615')
@@ -346,25 +380,41 @@ else:
                     st.info("No se encontró la columna de avance.")
                     
             with c2:
-                st.markdown("### 🚦 Salud de la Fuerza Operativa")
-                st.caption("Volumen de COTs agrupados por su ritmo de trabajo reciente.")
+                st.markdown("### 🚦 Salud de la Fuerza Operativa (Estatus Oficial)")
+                st.caption("Distribución del estatus oficial de los COTs según el reporte.")
                 if col_tendencia and col_tendencia in df_master.columns:
                     df_salud = df_master[col_tendencia].value_counts().reset_index()
                     df_salud.columns = ['Estatus', 'Cantidad de COTs']
                     df_salud = df_salud[df_salud['Estatus'] != 'Sin Registro']
                     st.bar_chart(df_salud.set_index('Estatus'), color='#4b5563')
                 else:
-                    st.info("No se encontraron las columnas de tendencia.")
+                    st.info("No se encontró la columna oficial de tendencia.")
 
             st.divider()
             st.markdown("### 🏆 Ranking General de Convencidos")
             if col_conv in df_master.columns:
-                col_tab = ['Nombres', 'Distrito', col_meta, col_conv, '% AVANCE', col_tendencia]
+                col_tab = ['Filtro_Nombre_Visual', 'Distrito', col_meta, col_conv, '% AVANCE', col_tendencia]
                 col_ex = [col for col in col_tab if col and col in df_master.columns]
-                st.dataframe(df_master[col_ex].sort_values(by=col_conv, ascending=False), use_container_width=True, hide_index=True)
+                
+                df_ranking_view = df_master[col_ex].sort_values(by=col_conv, ascending=False).reset_index(drop=True)
+                
+                def color_semaforo_cot(val):
+                    if isinstance(val, (int, float)):
+                        if val >= 70: return 'background-color: #d1fae5; color: #065f46;'
+                        elif val >= 40: return 'background-color: #fef3c7; color: #92400e;'
+                        else: return 'background-color: #fee2e2; color: #991b1b;'
+                    return ''
+
+                if '% AVANCE' in df_ranking_view.columns:
+                    st.dataframe(df_ranking_view.style.map(color_semaforo_cot, subset=['% AVANCE']), use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(df_ranking_view, use_container_width=True, hide_index=True)
             else:
                 st.info("No se encontró la columna de convencidos.")
 
+    # ----------------------------------------------------
+    # TAB 2: RENDIMIENTO Y EVALUACIÓN DE DISTRITALES
+    # ----------------------------------------------------
     with tab_distritales:
         st.subheader("Análisis de Liderazgo Distrital")
         st.write("Cruce de la Evaluación Institucional (Cualitativa) vs el Avance Real de su Distrito (Cuantitativo).")
@@ -372,17 +422,28 @@ else:
         if sel_persona != "Todos":
             st.info("⚠️ Para ver el análisis de Enlaces Distritales, debes quitar el filtro de búsqueda individual de COT en el menú lateral.")
         else:
-            if col_s1 and col_s3:
+            col_tend_s372 = 'TENDENCIA S372' if 'TENDENCIA S372' in df_master.columns else col_tendencia
+            
+            if col_s1 and col_s3 and col_tend_s372:
+                # Función auxiliar para sacar la moda o tendencia predominante en texto por distrito
+                def moda_tendencia(serie):
+                    s = serie.dropna()
+                    s = s[s != 'Sin Registro']
+                    if s.empty:
+                        return 'Sin Registro'
+                    return s.mode().iloc[0] if not s.mode().empty else s.iloc[0]
+
                 agg_dict = {
                     'Nombres': 'count',
                     col_s1: 'mean',
-                    col_s3: 'mean'
+                    col_s3: 'mean',
+                    col_tend_s372: lambda x: moda_tendencia(x)
                 }
                 if col_meta: agg_dict[col_meta] = 'sum'
                 if col_conv: agg_dict[col_conv] = 'sum'
                 
                 df_distrito_cuant = df_master.groupby('Distrito').agg(agg_dict).reset_index()
-                df_distrito_cuant = df_distrito_cuant.rename(columns={'Nombres': 'COTs_Activos'})
+                df_distrito_cuant = df_distrito_cuant.rename(columns={'Nombres': 'COTs_Activos', col_tend_s372: 'Tendencia Predominante'})
                 
                 meta_col_name = col_meta if col_meta else 'COTs_Activos'
                 conv_col_name = col_conv if col_conv else 'COTs_Activos'
@@ -390,8 +451,6 @@ else:
                 df_distrito_cuant['% Avance Distrito'] = df_distrito_cuant.apply(
                     lambda row: (row[conv_col_name] / row[meta_col_name] * 100) if meta_col_name in row and row[meta_col_name] > 0 else 0, axis=1
                 )
-                
-                df_distrito_cuant['Tendencia Neta (S3 - S1)'] = df_distrito_cuant[col_s3] - df_distrito_cuant[col_s1]
                 
                 st.markdown("### 🏅 Ranking Operativo por Distrito (Convencidos Totales)")
                 st.caption("Muestra el volumen total de captura consolidado a nivel distrital.")
@@ -410,7 +469,6 @@ else:
                 else:
                     st.markdown("### 📊 Desglose de Evaluación y Tendencia por Distrito")
                     
-                    # ---> FORMATO SOLICITADO: Nombre del Distrital con su número de distrito (D#) <---
                     df_analisis['Etiqueta Distrital'] = df_analisis['Enlace Distrital'] + " (D" + df_analisis['Distrito'].astype(str) + ")"
                     enlaces_disponibles = sorted(df_analisis['Etiqueta Distrital'].unique().tolist())
                     
@@ -422,7 +480,7 @@ else:
                     kcol1.metric("Distrito a Cargo", f"D - {datos_enlace['Distrito']}")
                     kcol2.metric("Evaluación Global (Web)", f"{datos_enlace['Evaluacion Global']:.2f} / 4.0")
                     kcol3.metric("Avance Operativo (COTs)", f"{datos_enlace['% Avance Distrito']:.1f} %")
-                    kcol4.metric("Tendencia Promedio", f"{datos_enlace['Tendencia Neta (S3 - S1)']:.1f} registros")
+                    kcol4.metric("Tendencia S372", str(datos_enlace['Tendencia Predominante']))
                     
                     st.write("")
                     
@@ -444,10 +502,24 @@ else:
                         st.info("**Variables Evaluadas:**\n\n- **Convicción:** Alineación a la narrativa.\n- **Equipo:** Manejo de conflictos.\n- **Territorio:** Auditoría de bitácoras y kilometraje.\n- **Regional:** Adaptabilidad táctica.")
                     
                     st.divider()
-                    st.markdown("### Ranking Analítico de Distritales")
-                    columnas_tabla_dist = ['Enlace Distrital', 'Distrito', 'COTs_Activos', conv_col_name, '% Avance Distrito', 'Tendencia Neta (S3 - S1)', 'Evaluacion Global']
+                    st.markdown("### 🏆 Ranking Analítico de Enlaces Distritales")
+                    st.caption("Incluye el promedio general de sus evaluaciones en la web y la tendencia escrita de su distrito basada en la columna S372.")
                     
-                    df_final_view = df_analisis[columnas_tabla_dist].sort_values(by='Evaluacion Global', ascending=False)
-                    st.dataframe(df_final_view, use_container_width=True, hide_index=True)
+                    columnas_tabla_dist = ['Enlace Distrital', 'Distrito', 'COTs_Activos', conv_col_name, '% Avance Distrito', 'Tendencia Predominante', 'Evaluacion Global']
+                    
+                    df_final_view = df_analisis[columnas_tabla_dist].sort_values(by='Evaluacion Global', ascending=False).reset_index(drop=True)
+                    
+                    def color_semaforo_dist(val):
+                        if isinstance(val, (int, float)):
+                            if val >= 3.0: return 'background-color: #d1fae5; color: #065f46;'
+                            elif val >= 2.0: return 'background-color: #fef3c7; color: #92400e;'
+                            else: return 'background-color: #fee2e2; color: #991b1b;'
+                        return ''
+
+                    st.dataframe(
+                        df_final_view.style.map(color_semaforo_dist, subset=['Evaluacion Global']), 
+                        use_container_width=True, 
+                        hide_index=True
+                    )
             else:
-                st.error("Faltan las columnas de métricas semanales en el Excel para calcular las tendencias del distrito.")
+                st.error("Faltan las columnas requeridas (S36, S38 o TENDENCIA S372) en el Excel.")
