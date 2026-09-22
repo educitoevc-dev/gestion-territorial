@@ -154,7 +154,7 @@ if not df_cuant.empty and not df_cual_cots.empty and 'Nombres' in df_cuant.colum
 else:
     df_master = df_cuant.copy()
 
-# Identificación dinámica de columnas
+# Identificación dinámica de columnas con robustez
 col_meta = 'META' if 'META' in df_master.columns else None
 if 'CONVENCIDOS A LA FECHA' in df_master.columns:
     col_conv = 'CONVENCIDOS A LA FECHA'
@@ -341,8 +341,8 @@ else:
             k_col1, k_col2, k_col3, k_col4 = st.columns(4)
             k_col1.metric("Elementos Activos", f"{len(df_master)}")
             
-            sum_conv = df_master[col_conv].sum() if col_conv in df_master.columns else 0
-            sum_meta = df_master[col_meta].sum() if col_meta in df_master.columns else 0
+            sum_conv = df_master[col_conv].sum() if col_conv and col_conv in df_master.columns else 0
+            sum_meta = df_master[col_meta].sum() if col_meta and col_meta in df_master.columns else 0
             
             k_col2.metric("Total Convencidos", f"{sum_conv:,.0f}")
             k_col3.metric("Meta Global", f"{sum_meta:,.0f}")
@@ -425,12 +425,11 @@ else:
             col_tend_s372 = 'TENDENCIA S372' if 'TENDENCIA S372' in df_master.columns else col_tendencia
             
             if col_s1 and col_s3 and col_tend_s372:
-                # Función auxiliar para sacar la moda o tendencia predominante en texto por distrito
+                # Función para sacar la moda (la tendencia que más se repite entre los COTs del distrito)
                 def moda_tendencia(serie):
                     s = serie.dropna()
                     s = s[s != 'Sin Registro']
-                    if s.empty:
-                        return 'Sin Registro'
+                    if s.empty: return 'Sin Registro'
                     return s.mode().iloc[0] if not s.mode().empty else s.iloc[0]
 
                 agg_dict = {
@@ -452,13 +451,19 @@ else:
                     lambda row: (row[conv_col_name] / row[meta_col_name] * 100) if meta_col_name in row and row[meta_col_name] > 0 else 0, axis=1
                 )
                 
-                st.markdown("### 🏅 Ranking Operativo por Distrito (Convencidos Totales)")
-                st.caption("Muestra el volumen total de captura consolidado a nivel distrital.")
-                df_ranking_dist = df_distrito_cuant[['Distrito', conv_col_name]].copy()
-                df_ranking_dist['Distrito'] = "Distrito " + df_ranking_dist['Distrito'].astype(str)
-                df_ranking_dist = df_ranking_dist.set_index('Distrito').sort_values(by=conv_col_name, ascending=False)
-                
-                st.bar_chart(df_ranking_dist, color="#880615")
+                # ---> GRAFICA: META VS CONVENCIDOS RESTAURADA <---
+                st.markdown("### 🏅 Ranking Operativo por Distrito (Meta vs Convencidos)")
+                st.caption("Compara el volumen total de captura consolidado frente a la meta asignada a nivel distrital.")
+                if meta_col_name in df_distrito_cuant.columns and conv_col_name in df_distrito_cuant.columns:
+                    df_ranking_dist = df_distrito_cuant[['Distrito', meta_col_name, conv_col_name]].copy()
+                    df_ranking_dist['Distrito'] = "Distrito " + df_ranking_dist['Distrito'].astype(str)
+                    df_ranking_dist = df_ranking_dist.set_index('Distrito').sort_values(by=conv_col_name, ascending=False)
+                    st.bar_chart(df_ranking_dist, color=["#d3d3d3", "#880615"])
+                else:
+                    df_ranking_dist = df_distrito_cuant[['Distrito', conv_col_name]].copy()
+                    df_ranking_dist['Distrito'] = "Distrito " + df_ranking_dist['Distrito'].astype(str)
+                    df_ranking_dist = df_ranking_dist.set_index('Distrito').sort_values(by=conv_col_name, ascending=False)
+                    st.bar_chart(df_ranking_dist, color="#880615")
                 
                 st.divider()
                 
@@ -480,7 +485,7 @@ else:
                     kcol1.metric("Distrito a Cargo", f"D - {datos_enlace['Distrito']}")
                     kcol2.metric("Evaluación Global (Web)", f"{datos_enlace['Evaluacion Global']:.2f} / 4.0")
                     kcol3.metric("Avance Operativo (COTs)", f"{datos_enlace['% Avance Distrito']:.1f} %")
-                    kcol4.metric("Tendencia S372", str(datos_enlace['Tendencia Predominante']))
+                    kcol4.metric("Tendencia General", str(datos_enlace['Tendencia Predominante']))
                     
                     st.write("")
                     
@@ -503,7 +508,7 @@ else:
                     
                     st.divider()
                     st.markdown("### 🏆 Ranking Analítico de Enlaces Distritales")
-                    st.caption("Incluye el promedio general de sus evaluaciones en la web y la tendencia escrita de su distrito basada en la columna S372.")
+                    st.caption("Incluye el promedio general de sus evaluaciones en la web y la tendencia oficial de su distrito.")
                     
                     columnas_tabla_dist = ['Enlace Distrital', 'Distrito', 'COTs_Activos', conv_col_name, '% Avance Distrito', 'Tendencia Predominante', 'Evaluacion Global']
                     
@@ -522,4 +527,4 @@ else:
                         hide_index=True
                     )
             else:
-                st.error("Faltan las columnas requeridas (S36, S38 o TENDENCIA S372) en el Excel.")
+                st.error("Faltan las columnas requeridas en el Excel para mostrar este análisis.")
