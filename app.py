@@ -23,6 +23,18 @@ db = firestore.client()
 
 URL_EXCEL_CUANTITATIVO = "https://docs.google.com/spreadsheets/d/1HdameC4EE1_drytVlQKxtu-1q78PE0HRx0QNqeSXqLo/export?format=csv"
 
+# Constantes de columnas diarias (Nombres brutos del Excel y sus nombres limpios para la gráfica)
+RAW_DIAS = [
+    '2002-08-31 00:00:00', '01-sep3', '02-sep4', '03-sep5', '04-sep6', '05-sep7', '06-sep82', 
+    '07-sep', '08-sep', '09-sep', '10-sep', '11-sep', '12-sep', '13-sep', 
+    '2026-09-14 00:00:00', '2026-09-15 00:00:00', '2026-09-16 00:00:00', '2026-09-17 00:00:00', '2026-09-18 00:00:00', '2026-09-19 00:00:00', '2026-09-20 00:00:00'
+]
+CLEAN_DIAS = [
+    '31-ago', '01-sep', '02-sep', '03-sep', '04-sep', '05-sep', '06-sep', 
+    '07-sep', '08-sep', '09-sep', '10-sep', '11-sep', '12-sep', '13-sep', 
+    '14-sep', '15-sep', '16-sep', '17-sep', '18-sep', '19-sep', '20-sep'
+]
+
 # ==========================================
 # 2. MOTOR DE EXTRACCIÓN DE DATOS (ETL)
 # ==========================================
@@ -50,7 +62,7 @@ def cargar_datos_cuantitativos():
 
         cols_numericas = ['META', 'CONVENCIDOS A LA FECHA', 'CONVENCIDOS', 'AVANCE POR DÍA', 'SEPTIEMBRE 01-20', 'AGOSTO 17 - 31',
                           'Total semana 1', 'Total semanal 2', 'Total semanal 3', 
-                          'TOTAL S36', 'TOTAL S37', 'TOTAL S38']
+                          'TOTAL S36', 'TOTAL S37', 'TOTAL S38'] + RAW_DIAS
         
         for col in cols_numericas:
             if col in df.columns:
@@ -154,7 +166,7 @@ if not df_cuant.empty and not df_cual_cots.empty and 'Nombres' in df_cuant.colum
 else:
     df_master = df_cuant.copy()
 
-# Identificación dinámica de columnas con robustez
+# Identificación dinámica de columnas
 col_meta = 'META' if 'META' in df_master.columns else None
 if 'CONVENCIDOS A LA FECHA' in df_master.columns:
     col_conv = 'CONVENCIDOS A LA FECHA'
@@ -277,6 +289,19 @@ else:
                 st.info("ℹ️ Teléfono no disponible para enlace directo de WhatsApp.")
 
             st.write("")
+            
+            # --- CÁLCULO DINÁMICO DEL PROMEDIO DIARIO ---
+            valores_dias = []
+            dias_presentes = []
+            nombres_dias = []
+            
+            for raw, clean in zip(RAW_DIAS, CLEAN_DIAS):
+                if raw in df_master.columns:
+                    dias_presentes.append(raw)
+                    nombres_dias.append(clean)
+                    valores_dias.append(datos_perfil.get(raw, 0))
+
+            promedio_diario = sum(valores_dias) / len(valores_dias) if len(valores_dias) > 0 else 0
 
             kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
             meta_val = datos_perfil.get(col_meta, 0) if col_meta else 0
@@ -285,38 +310,31 @@ else:
             kpi1.metric("META Total", f"{meta_val:,.0f}")
             kpi2.metric("Convencidos", f"{conv_val:,.0f}")
             kpi3.metric("% Avance", f"{datos_perfil.get('% AVANCE', 0):.1f} %")
-            kpi4.metric("Avance por Día", f"{datos_perfil.get('AVANCE POR DÍA', 0):.1f}")
-            kpi5.metric("Tendencia Actual", str(datos_perfil.get(col_tendencia, 'Sin Registro')))
+            kpi4.metric("Avance por Día (Promedio)", f"{promedio_diario:.1f}")
+            kpi5.metric("Tendencia Oficial", str(datos_perfil.get(col_tendencia, 'Sin Registro')))
             
             st.divider()
             
-            st.markdown("### 📈 Línea de Tiempo: Evolución de Resultados")
-            if col_s1 and col_s2 and col_s3:
+            # --- GRÁFICA DE EVOLUCIÓN DÍA POR DÍA ---
+            st.markdown("### 📈 Línea de Tiempo: Evolución Diaria de Resultados")
+            if len(dias_presentes) > 0:
                 col_tl_chart, col_tl_info = st.columns([2, 1])
-                datos_tiempo = {
-                    'Semana': ['Semana 36', 'Semana 37', 'Semana 38'],
-                    'Registros Validados': [
-                        datos_perfil.get(col_s1, 0),
-                        datos_perfil.get(col_s2, 0),
-                        datos_perfil.get(col_s3, 0)
-                    ]
-                }
-                df_tiempo = pd.DataFrame(datos_tiempo).set_index('Semana')
+                df_tiempo = pd.DataFrame({
+                    'Día': nombres_dias,
+                    'Registros Validados': valores_dias
+                }).set_index('Día')
                 
                 with col_tl_chart:
                     st.line_chart(df_tiempo, color='#880615')
                 
                 with col_tl_info:
-                    st.markdown("**Resumen de Avance**")
-                    crecimiento = datos_perfil.get(col_s3, 0) - datos_perfil.get(col_s1, 0)
-                    if crecimiento > 0:
-                        st.success(f"Crecimiento neto de **+{crecimiento:,.0f}** registros.")
-                    elif crecimiento < 0:
-                        st.error(f"Caída neta de **{crecimiento:,.0f}** registros.")
-                    else:
-                        st.info("Sin variaciones.")
+                    st.markdown("**Resumen del Periodo (Día por Día)**")
+                    total_periodo = sum(valores_dias)
+                    pico_maximo = max(valores_dias) if valores_dias else 0
+                    st.success(f"**{total_periodo:,.0f}** registros en total.")
+                    st.info(f"Pico más alto: **{pico_maximo:,.0f}** registros en un solo día.")
             else:
-                st.info("Faltan columnas semanales para graficar la evolución.")
+                st.info("Faltan las columnas diarias en el Excel para graficar la evolución.")
 
             st.divider()
             
@@ -351,18 +369,27 @@ else:
             
             st.divider()
             
-            st.markdown("### 📈 Tendencia de Rendimiento Global (Evolución Semanal)")
-            st.caption("Ritmo de captura consolidado a lo largo del periodo.")
-            if col_s1 and col_s2 and col_s3:
+            st.markdown("### 📈 Tendencia de Rendimiento Global (Evolución Diaria)")
+            st.caption("Ritmo de captura consolidado a lo largo del periodo, día por día.")
+            
+            dias_presentes_global = []
+            nombres_dias_global = []
+            valores_globales = []
+            
+            for raw, clean in zip(RAW_DIAS, CLEAN_DIAS):
+                if raw in df_master.columns:
+                    dias_presentes_global.append(raw)
+                    nombres_dias_global.append(clean)
+                    valores_globales.append(df_master[raw].sum())
+                    
+            if len(dias_presentes_global) > 0:
                 df_tendencia_global = pd.DataFrame({
-                    'Semana 36': [df_master[col_s1].sum()],
-                    'Semana 37': [df_master[col_s2].sum()],
-                    'Semana 38': [df_master[col_s3].sum()]
-                }).T
-                df_tendencia_global.columns = ['Registros Validados']
+                    'Día': nombres_dias_global,
+                    'Registros Validados': valores_globales
+                }).set_index('Día')
                 st.line_chart(df_tendencia_global, color='#880615')
             else:
-                st.info("Faltan las columnas semanales en el Excel para graficar la evolución.")
+                st.info("Faltan las columnas diarias en el Excel para graficar la evolución.")
 
             st.divider()
 
@@ -424,8 +451,7 @@ else:
         else:
             col_tend_s372 = 'TENDENCIA S372' if 'TENDENCIA S372' in df_master.columns else col_tendencia
             
-            if col_s1 and col_s3 and col_tend_s372:
-                # Función para sacar la moda (la tendencia que más se repite entre los COTs del distrito)
+            if col_tend_s372:
                 def moda_tendencia(serie):
                     s = serie.dropna()
                     s = s[s != 'Sin Registro']
@@ -434,8 +460,6 @@ else:
 
                 agg_dict = {
                     'Nombres': 'count',
-                    col_s1: 'mean',
-                    col_s3: 'mean',
                     col_tend_s372: lambda x: moda_tendencia(x)
                 }
                 if col_meta: agg_dict[col_meta] = 'sum'
@@ -451,7 +475,6 @@ else:
                     lambda row: (row[conv_col_name] / row[meta_col_name] * 100) if meta_col_name in row and row[meta_col_name] > 0 else 0, axis=1
                 )
                 
-                # ---> GRAFICA: META VS CONVENCIDOS RESTAURADA <---
                 st.markdown("### 🏅 Ranking Operativo por Distrito (Meta vs Convencidos)")
                 st.caption("Compara el volumen total de captura consolidado frente a la meta asignada a nivel distrital.")
                 if meta_col_name in df_distrito_cuant.columns and conv_col_name in df_distrito_cuant.columns:
@@ -527,4 +550,4 @@ else:
                         hide_index=True
                     )
             else:
-                st.error("Faltan las columnas requeridas en el Excel para mostrar este análisis.")
+                st.error("Faltan las columnas de tendencia en el Excel para mostrar este análisis.")
