@@ -23,17 +23,10 @@ db = firestore.client()
 
 URL_EXCEL_CUANTITATIVO = "https://docs.google.com/spreadsheets/d/1HdameC4EE1_drytVlQKxtu-1q78PE0HRx0QNqeSXqLo/export?format=csv"
 
-# Constantes de columnas diarias (Nombres brutos del Excel y sus nombres limpios para la gráfica)
-RAW_DIAS = [
-    '2002-08-31 00:00:00', '01-sep3', '02-sep4', '03-sep5', '04-sep6', '05-sep7', '06-sep82', 
-    '07-sep', '08-sep', '09-sep', '10-sep', '11-sep', '12-sep', '13-sep', 
-    '2026-09-14 00:00:00', '2026-09-15 00:00:00', '2026-09-16 00:00:00', '2026-09-17 00:00:00', '2026-09-18 00:00:00', '2026-09-19 00:00:00', '2026-09-20 00:00:00'
-]
-CLEAN_DIAS = [
-    '31-ago', '01-sep', '02-sep', '03-sep', '04-sep', '05-sep', '06-sep', 
-    '07-sep', '08-sep', '09-sep', '10-sep', '11-sep', '12-sep', '13-sep', 
-    '14-sep', '15-sep', '16-sep', '17-sep', '18-sep', '19-sep', '20-sep'
-]
+# Nombres de las etiquetas limpias para las gráficas
+CLEAN_DIAS_S36 = ['31-ago', '01-sep', '02-sep', '03-sep', '04-sep', '05-sep', '06-sep']
+CLEAN_DIAS_S37 = ['07-sep', '08-sep', '09-sep', '10-sep', '11-sep', '12-sep', '13-sep']
+CLEAN_DIAS_S38 = ['14-sep', '15-sep', '16-sep', '17-sep', '18-sep', '19-sep', '20-sep']
 
 # ==========================================
 # 2. MOTOR DE EXTRACCIÓN DE DATOS (ETL)
@@ -60,9 +53,23 @@ def cargar_datos_cuantitativos():
             df['% AVANCE'] = df['% AVANCE'].astype(str).str.replace('%', '').str.replace(',', '').str.strip()
             df['% AVANCE'] = pd.to_numeric(df['% AVANCE'], errors='coerce').fillna(0)
 
+        # Extracción dinámica de días para evitar errores por cambios de formato de fecha en Excel
+        cols = df.columns.tolist()
+        dias_s38, dias_s37, dias_s36 = [], [], []
+        
+        try: dias_s38 = cols[cols.index('TENDENCIA SEPTIEMBRE')+1 : cols.index('TOTAL S38')]
+        except: pass
+        try: dias_s37 = cols[cols.index('TENDENCIA S38')+1 : cols.index('TOTAL S37')]
+        except: pass
+        try: dias_s36 = cols[cols.index('TENDENCIA S372')+1 : cols.index('TOTAL S36')]
+        except: pass
+
+        dias_dinamicos = dias_s36 + dias_s37 + dias_s38
+
         cols_numericas = ['META', 'CONVENCIDOS A LA FECHA', 'CONVENCIDOS', 'AVANCE POR DÍA', 'SEPTIEMBRE 01-20', 'AGOSTO 17 - 31',
                           'Total semana 1', 'Total semanal 2', 'Total semanal 3', 
-                          'TOTAL S36', 'TOTAL S37', 'TOTAL S38'] + RAW_DIAS
+                          'TOTAL S36', 'TOTAL S37', 'TOTAL S38',
+                          'PROMEDIO S36', 'PROMEDIO S372', 'PROMEDIO S38'] + dias_dinamicos
         
         for col in cols_numericas:
             if col in df.columns:
@@ -70,15 +77,18 @@ def cargar_datos_cuantitativos():
                     df[col] = df[col].astype(str).str.replace(',', '')
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 
-        # Limpieza de textos de tendencia oficiales del Excel
-        for col_tend in ['TENDENCIA SEMANA 3', 'TENDENCIA S38', 'TENDENCIA S372']:
-            if col_tend in df.columns:
-                df[col_tend] = df[col_tend].fillna('Sin Registro').astype(str).str.strip()
+        text_cols = ['TENDENCIA SEMANA 3', 'TENDENCIA S38', 'TENDENCIA S372', 'TENDENCIA S36', 
+                     'ESTADO S36', 'ESTADO S372', 'ESTADO S38']
+        for col_t in text_cols:
+            if col_t in df.columns:
+                df[col_t] = df[col_t].fillna('Sin Registro').astype(str).str.strip()
+                if 'ESTADO' in col_t:
+                    df[col_t] = df[col_t].str.replace('●', '').str.strip()
             
-        return df
+        return df, dias_s36, dias_s37, dias_s38
     except Exception as e:
         st.error(f"Error al cargar el Excel Cuantitativo: {e}")
-        return pd.DataFrame()
+        return pd.DataFrame(), [], [], []
 
 def calcular_promedio_lista(lista):
     if isinstance(lista, list) and len(lista) > 0:
@@ -150,10 +160,13 @@ def cargar_datos_cualitativos_distritales():
         st.error(f"Error al conectar con Firebase (Distritales): {e}")
         return pd.DataFrame()
 
-# Carga paralela
-df_cuant = cargar_datos_cuantitativos()
+# Carga paralela y mapeo de variables
+df_cuant, dias_raw_s36, dias_raw_s37, dias_raw_s38 = cargar_datos_cuantitativos()
 df_cual_cots = cargar_datos_cualitativos_cots()
 df_cual_dist = cargar_datos_cualitativos_distritales()
+
+dias_raw_totales = dias_raw_s36 + dias_raw_s37 + dias_raw_s38
+dias_clean_totales = CLEAN_DIAS_S36[:len(dias_raw_s36)] + CLEAN_DIAS_S37[:len(dias_raw_s37)] + CLEAN_DIAS_S38[:len(dias_raw_s38)]
 
 if not df_cuant.empty and 'Nombres' in df_cuant.columns:
     df_cuant['Nombres'] = df_cuant['Nombres'].astype(str).str.upper().str.strip()
@@ -166,29 +179,20 @@ if not df_cuant.empty and not df_cual_cots.empty and 'Nombres' in df_cuant.colum
 else:
     df_master = df_cuant.copy()
 
-# Identificación dinámica de columnas
 col_meta = 'META' if 'META' in df_master.columns else None
-if 'CONVENCIDOS A LA FECHA' in df_master.columns:
-    col_conv = 'CONVENCIDOS A LA FECHA'
-elif 'SEPTIEMBRE 01-20' in df_master.columns:
-    col_conv = 'SEPTIEMBRE 01-20'
-elif 'CONVENCIDOS' in df_master.columns:
-    col_conv = 'CONVENCIDOS'
-else:
-    col_conv = None
+if 'CONVENCIDOS A LA FECHA' in df_master.columns: col_conv = 'CONVENCIDOS A LA FECHA'
+elif 'SEPTIEMBRE 01-20' in df_master.columns: col_conv = 'SEPTIEMBRE 01-20'
+elif 'CONVENCIDOS' in df_master.columns: col_conv = 'CONVENCIDOS'
+else: col_conv = None
 
 col_s1 = 'TOTAL S36' if 'TOTAL S36' in df_master.columns else ('Total semana 1' if 'Total semana 1' in df_master.columns else None)
 col_s2 = 'TOTAL S37' if 'TOTAL S37' in df_master.columns else ('Total semanal 2' if 'Total semanal 2' in df_master.columns else None)
 col_s3 = 'TOTAL S38' if 'TOTAL S38' in df_master.columns else ('Total semanal 3' if 'Total semanal 3' in df_master.columns else None)
 
-if 'TENDENCIA S38' in df_master.columns:
-    col_tendencia = 'TENDENCIA S38'
-elif 'TENDENCIA S372' in df_master.columns:
-    col_tendencia = 'TENDENCIA S372'
-elif 'TENDENCIA SEMANA 3' in df_master.columns:
-    col_tendencia = 'TENDENCIA SEMANA 3'
-else:
-    col_tendencia = None
+if 'TENDENCIA S38' in df_master.columns: col_tendencia = 'TENDENCIA S38'
+elif 'TENDENCIA S372' in df_master.columns: col_tendencia = 'TENDENCIA S372'
+elif 'TENDENCIA SEMANA 3' in df_master.columns: col_tendencia = 'TENDENCIA SEMANA 3'
+else: col_tendencia = None
 
 if not df_master.empty and 'Estado' in df_master.columns:
     df_master = df_master[~df_master['Estado'].astype(str).str.strip().isin(['0', '0.0', 'nan', 'NaN', ''])]
@@ -198,6 +202,22 @@ if not df_master.empty and 'Estructura' in df_master.columns:
 
 if 'Distrito' in df_master.columns:
     df_master['Distrito'] = df_master['Distrito'].apply(lambda x: str(int(float(x))) if str(x).replace('.','',1).isdigit() else str(x))
+
+def get_color_estado(estado_texto):
+    txt = str(estado_texto).upper()
+    if "EXCELENTE" in txt: return "#065f46", "#d1fae5" 
+    if "ALTO" in txt: return "#1e40af", "#dbeafe" 
+    if "MEDIO" in txt: return "#b45309", "#fef3c7" 
+    if "BAJO" in txt: return "#c2410c", "#ffedd5" 
+    if "CRITICO" in txt or "CRÍTICO" in txt: return "#991b1b", "#fee2e2" 
+    return "#4b5563", "#f3f4f6" 
+
+def get_color_tendencia(tendencia_texto):
+    txt = str(tendencia_texto).upper()
+    if "CRECIENTE" in txt: return "#065f46", "#d1fae5"
+    if "DECRECIENTE" in txt: return "#991b1b", "#fee2e2"
+    if "ESTABLE" in txt: return "#1e40af", "#dbeafe"
+    return "#4b5563", "#f3f4f6"
 
 # ==========================================
 # 3. FILTROS EN CASCADA CON ESTILO MORENA
@@ -257,6 +277,12 @@ if not df_master.empty:
     else:
         st.sidebar.info("Selecciona un Estado arriba para habilitar la búsqueda individual.")
 
+OPCIONES_SEMANALES = {
+    "Semana 38 (Actual)": {"tot": "TOTAL S38", "prom": "PROMEDIO S38", "est": "ESTADO S38", "tend": "TENDENCIA S38", "raw_dias": dias_raw_s38, "clean_dias": CLEAN_DIAS_S38},
+    "Semana 37": {"tot": "TOTAL S37", "prom": "PROMEDIO S372", "est": "ESTADO S372", "tend": "TENDENCIA S372", "raw_dias": dias_raw_s37, "clean_dias": CLEAN_DIAS_S37},
+    "Semana 36": {"tot": "TOTAL S36", "prom": "PROMEDIO S36", "est": "ESTADO S36", "tend": "TENDENCIA S36", "raw_dias": dias_raw_s36, "clean_dias": CLEAN_DIAS_S36}
+}
+
 # ==========================================
 # 4. FRONTEND CON PESTAÑAS (TABS)
 # ==========================================
@@ -287,21 +313,12 @@ else:
                 st.markdown(f'<a href="{url_whatsapp}" target="_blank"><button style="background-color:#25D366; color:white; padding:8px 16px; border:none; border-radius:6px; font-weight:bold; cursor:pointer; margin-bottom:15px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">💬 Contactar por WhatsApp ({telefono_raw})</button></a>', unsafe_allow_html=True)
             else:
                 st.info("ℹ️ Teléfono no disponible para enlace directo de WhatsApp.")
+                
+            st.divider()
 
-            st.write("")
-            
-            # --- CÁLCULO DINÁMICO DEL PROMEDIO DIARIO ---
-            valores_dias = []
-            dias_presentes = []
-            nombres_dias = []
-            
-            for raw, clean in zip(RAW_DIAS, CLEAN_DIAS):
-                if raw in df_master.columns:
-                    dias_presentes.append(raw)
-                    nombres_dias.append(clean)
-                    valores_dias.append(datos_perfil.get(raw, 0))
-
-            promedio_diario = sum(valores_dias) / len(valores_dias) if len(valores_dias) > 0 else 0
+            # Cálculo de promedio histórico general (Considera todos los días de S36, S37 y S38)
+            val_dias_historicos = [datos_perfil.get(raw, 0) for raw in dias_raw_totales if raw in df_master.columns]
+            prom_historico_general = sum(val_dias_historicos) / len(val_dias_historicos) if len(val_dias_historicos) > 0 else 0
 
             kpi1, kpi2, kpi3, kpi4, kpi5 = st.columns(5)
             meta_val = datos_perfil.get(col_meta, 0) if col_meta else 0
@@ -310,14 +327,57 @@ else:
             kpi1.metric("META Total", f"{meta_val:,.0f}")
             kpi2.metric("Convencidos", f"{conv_val:,.0f}")
             kpi3.metric("% Avance", f"{datos_perfil.get('% AVANCE', 0):.1f} %")
-            kpi4.metric("Avance por Día (Promedio)", f"{promedio_diario:.1f}")
-            kpi5.metric("Tendencia Oficial", str(datos_perfil.get(col_tendencia, 'Sin Registro')))
+            kpi4.metric("Avance por Día (Promedio Histórico)", f"{prom_historico_general:.1f}")
+            kpi5.metric("Tendencia Actual", str(datos_perfil.get(col_tendencia, 'Sin Registro')))
             
             st.divider()
+
+            st.markdown("### 📅 Analizador de Desempeño por Semana")
+            st.caption("Selecciona una fecha para visualizar el rendimiento y el nivel de estado correspondiente a esa semana.")
             
-            # --- GRÁFICA DE EVOLUCIÓN DÍA POR DÍA ---
-            st.markdown("### 📈 Línea de Tiempo: Evolución Diaria de Resultados")
-            if len(dias_presentes) > 0:
+            semanas_validas = {k: v for k, v in OPCIONES_SEMANALES.items() if v["est"] in df_master.columns and v["tend"] in df_master.columns}
+            
+            if semanas_validas:
+                sel_sem_indiv = st.radio("Selecciona la semana a evaluar:", list(semanas_validas.keys()), horizontal=True)
+                
+                cfg_sem = semanas_validas[sel_sem_indiv]
+                val_prom = datos_perfil.get(cfg_sem["prom"], 0)
+                val_est = str(datos_perfil.get(cfg_sem["est"], 'Sin Registro')).strip()
+                val_tend = str(datos_perfil.get(cfg_sem["tend"], 'Sin Registro')).strip()
+                
+                cE_text, cE_bg = get_color_estado(val_est)
+                cT_text, cT_bg = get_color_tendencia(val_tend)
+                
+                met1, met2, met3 = st.columns(3)
+                met1.metric(f"Promedio Diario ({sel_sem_indiv})", f"{val_prom:.1f}")
+                
+                met2.markdown(f"**Estado de Desempeño:**")
+                if val_est != 'Sin Registro':
+                    met2.markdown(f'<div style="background-color:{cE_bg}; color:{cE_text}; padding:8px 12px; border-radius:6px; font-weight:bold; display:inline-block; border: 1px solid {cE_text};">{val_est.upper()}</div>', unsafe_allow_html=True)
+                else:
+                    met2.info("Sin Registro")
+                    
+                met3.markdown(f"**Tendencia Operativa:**")
+                if val_tend != 'Sin Registro':
+                    met3.markdown(f'<div style="background-color:{cT_bg}; color:{cT_text}; padding:8px 12px; border-radius:6px; font-weight:bold; display:inline-block; border: 1px solid {cT_text};">{val_tend.upper()}</div>', unsafe_allow_html=True)
+                else:
+                    met3.info("Sin Registro")
+                    
+                st.divider()
+            
+            # ---> GRÁFICA HISTÓRICA COMPLETA DE LÍNEAS (Las 3 semanas corridas) <---
+            st.markdown("### 📈 Evolución Diaria de Resultados (S36, S37 y S38)")
+            st.caption("Gráfica continua que muestra el esfuerzo de captura día por día durante todo el mes.")
+            
+            valores_dias = []
+            nombres_dias = []
+            
+            for raw, clean in zip(dias_raw_totales, dias_clean_totales):
+                if raw in df_master.columns:
+                    nombres_dias.append(clean)
+                    valores_dias.append(datos_perfil.get(raw, 0))
+
+            if len(nombres_dias) > 0:
                 col_tl_chart, col_tl_info = st.columns([2, 1])
                 df_tiempo = pd.DataFrame({
                     'Día': nombres_dias,
@@ -328,13 +388,13 @@ else:
                     st.line_chart(df_tiempo, color='#880615')
                 
                 with col_tl_info:
-                    st.markdown("**Resumen del Periodo (Día por Día)**")
+                    st.markdown("**Resumen de Actividad**")
                     total_periodo = sum(valores_dias)
                     pico_maximo = max(valores_dias) if valores_dias else 0
-                    st.success(f"**{total_periodo:,.0f}** registros en total.")
-                    st.info(f"Pico más alto: **{pico_maximo:,.0f}** registros en un solo día.")
+                    st.success(f"**{total_periodo:,.0f}** registros históricos validados.")
+                    st.info(f"Pico de esfuerzo: **{pico_maximo:,.0f}** registros en un solo día.")
             else:
-                st.info("Faltan las columnas diarias en el Excel para graficar la evolución.")
+                st.info("No se detectaron los días en el reporte para generar la gráfica.")
 
             st.divider()
             
@@ -369,14 +429,43 @@ else:
             
             st.divider()
             
-            st.markdown("### 📈 Tendencia de Rendimiento Global (Evolución Diaria)")
-            st.caption("Ritmo de captura consolidado a lo largo del periodo, día por día.")
+            st.markdown("### Estatus Oficial")
+            st.caption("Selecciona la fecha para visualizar el nivel de desempeño global y la tendencia de la fuerza de trabajo.")
+            
+            semanas_validas_glob = {k: v for k, v in OPCIONES_SEMANALES.items() if v["est"] in df_master.columns and v["tend"] in df_master.columns}
+            
+            if semanas_validas_glob:
+                sel_sem_glob = st.radio("Filtro Semanal de Salud Operativa:", list(semanas_validas_glob.keys()), horizontal=True)
+                cfg_glob = semanas_validas_glob[sel_sem_glob]
+                
+                cg1, cg2 = st.columns(2)
+                with cg1:
+                    st.markdown(f"**Distribución de Desempeño ({sel_sem_glob})**")
+                    df_salud_est = df_master[cfg_glob["est"]].value_counts().reset_index()
+                    df_salud_est.columns = ['Estado de Desempeño', 'Cantidad de COTs']
+                    df_salud_est = df_salud_est[df_salud_est['Estado de Desempeño'] != 'Sin Registro']
+                    st.bar_chart(df_salud_est.set_index('Estado de Desempeño'), color='#1e40af')
+                    
+                with cg2:
+                    st.markdown(f"**Tendencia Dominante ({sel_sem_glob})**")
+                    df_salud_tend = df_master[cfg_glob["tend"]].value_counts().reset_index()
+                    df_salud_tend.columns = ['Tendencia', 'Cantidad de COTs']
+                    df_salud_tend = df_salud_tend[df_salud_tend['Tendencia'] != 'Sin Registro']
+                    st.bar_chart(df_salud_tend.set_index('Tendencia'), color='#880615')
+            else:
+                st.warning("No se encontraron las columnas de Estado y Tendencia para mostrar la salud de la región.")
+
+            st.divider()
+            
+            # ---> GRÁFICA GLOBAL HISTÓRICA COMPLETA DE LÍNEAS (Las 3 semanas corridas) <---
+            st.markdown("### 📈 Tendencia de Rendimiento Global (S36, S37 y S38)")
+            st.caption("Ritmo de captura consolidado a lo largo de todo el mes, día por día.")
             
             dias_presentes_global = []
             nombres_dias_global = []
             valores_globales = []
             
-            for raw, clean in zip(RAW_DIAS, CLEAN_DIAS):
+            for raw, clean in zip(dias_raw_totales, dias_clean_totales):
                 if raw in df_master.columns:
                     dias_presentes_global.append(raw)
                     nombres_dias_global.append(clean)
@@ -392,50 +481,18 @@ else:
                 st.info("Faltan las columnas diarias en el Excel para graficar la evolución.")
 
             st.divider()
-
-            c1, c2 = st.columns(2)
             
-            with c1:
-                st.markdown("### 📊 Cumplimiento Promedio por Distrito")
-                st.caption("Porcentaje de avance real promedio logrado por los COTs.")
-                if '% AVANCE' in df_master.columns:
-                    df_avance_dist = df_master.groupby('Distrito')['% AVANCE'].mean().reset_index()
-                    df_avance_dist['Distrito'] = "Dist. " + df_avance_dist['Distrito'].astype(str)
-                    df_avance_dist = df_avance_dist.sort_values(by='% AVANCE', ascending=False)
-                    st.bar_chart(df_avance_dist.set_index('Distrito'), color='#880615')
-                else:
-                    st.info("No se encontró la columna de avance.")
-                    
-            with c2:
-                st.markdown("### 🚦 Salud de la Fuerza Operativa (Estatus Oficial)")
-                st.caption("Distribución del estatus oficial de los COTs según el reporte.")
-                if col_tendencia and col_tendencia in df_master.columns:
-                    df_salud = df_master[col_tendencia].value_counts().reset_index()
-                    df_salud.columns = ['Estatus', 'Cantidad de COTs']
-                    df_salud = df_salud[df_salud['Estatus'] != 'Sin Registro']
-                    st.bar_chart(df_salud.set_index('Estatus'), color='#4b5563')
-                else:
-                    st.info("No se encontró la columna oficial de tendencia.")
-
-            st.divider()
             st.markdown("### 🏆 Ranking General de Convencidos")
+            col_est_default = 'ESTADO S38' if 'ESTADO S38' in df_master.columns else None
             if col_conv in df_master.columns:
-                col_tab = ['Filtro_Nombre_Visual', 'Distrito', col_meta, col_conv, '% AVANCE', col_tendencia]
+                col_tab = ['Filtro_Nombre_Visual', 'Distrito', col_meta, col_conv]
+                if col_est_default: col_tab.append(col_est_default)
+                if col_tendencia: col_tab.append(col_tendencia)
+                
                 col_ex = [col for col in col_tab if col and col in df_master.columns]
                 
                 df_ranking_view = df_master[col_ex].sort_values(by=col_conv, ascending=False).reset_index(drop=True)
-                
-                def color_semaforo_cot(val):
-                    if isinstance(val, (int, float)):
-                        if val >= 70: return 'background-color: #d1fae5; color: #065f46;'
-                        elif val >= 40: return 'background-color: #fef3c7; color: #92400e;'
-                        else: return 'background-color: #fee2e2; color: #991b1b;'
-                    return ''
-
-                if '% AVANCE' in df_ranking_view.columns:
-                    st.dataframe(df_ranking_view.style.map(color_semaforo_cot, subset=['% AVANCE']), use_container_width=True, hide_index=True)
-                else:
-                    st.dataframe(df_ranking_view, use_container_width=True, hide_index=True)
+                st.dataframe(df_ranking_view, use_container_width=True, hide_index=True)
             else:
                 st.info("No se encontró la columna de convencidos.")
 
@@ -508,7 +565,15 @@ else:
                     kcol1.metric("Distrito a Cargo", f"D - {datos_enlace['Distrito']}")
                     kcol2.metric("Evaluación Global (Web)", f"{datos_enlace['Evaluacion Global']:.2f} / 4.0")
                     kcol3.metric("Avance Operativo (COTs)", f"{datos_enlace['% Avance Distrito']:.1f} %")
-                    kcol4.metric("Tendencia General", str(datos_enlace['Tendencia Predominante']))
+                    
+                    val_t_dist = str(datos_enlace['Tendencia Predominante'])
+                    cT_text_d, cT_bg_d = get_color_tendencia(val_t_dist)
+                    
+                    kcol4.markdown("**Tendencia Oficial del Distrito**")
+                    if val_t_dist != 'Sin Registro':
+                        kcol4.markdown(f'<div style="background-color:{cT_bg_d}; color:{cT_text_d}; padding:4px 8px; border-radius:4px; font-weight:bold; display:inline-block; border: 1px solid {cT_text_d};">{val_t_dist.upper()}</div>', unsafe_allow_html=True)
+                    else:
+                        kcol4.info("Sin Registro")
                     
                     st.write("")
                     
