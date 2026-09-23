@@ -66,7 +66,8 @@ def cargar_datos_cuantitativos():
 
         dias_dinamicos = dias_s36 + dias_s37 + dias_s38
 
-        cols_numericas = ['META', 'CONVENCIDOS A LA FECHA', 'CONVENCIDOS', 'AVANCE POR DÍA', 'SEPTIEMBRE 01-20', 'AGOSTO 17 - 31',
+        # --- MODIFICACIÓN 1: Se añadieron 'METAS' y 'META GLOBAL' a la lista de columnas numéricas ---
+        cols_numericas = ['META', 'METAS', 'META GLOBAL', 'CONVENCIDOS A LA FECHA', 'CONVENCIDOS', 'AVANCE POR DÍA', 'SEPTIEMBRE 01-20', 'AGOSTO 17 - 31',
                           'Total semana 1', 'Total semanal 2', 'Total semanal 3', 
                           'TOTAL S36', 'TOTAL S37', 'TOTAL S38',
                           'PROMEDIO S36', 'PROMEDIO S372', 'PROMEDIO S38'] + dias_dinamicos
@@ -74,7 +75,8 @@ def cargar_datos_cuantitativos():
         for col in cols_numericas:
             if col in df.columns:
                 if df[col].dtype == object:
-                    df[col] = df[col].astype(str).str.replace(',', '')
+                    # --- MODIFICACIÓN 2: Expresión regular para eliminar comas, espacios y símbolos ---
+                    df[col] = df[col].astype(str).str.replace(r'[$,\s]', '', regex=True)
                 df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
                 
         text_cols = ['TENDENCIA SEMANA 3', 'TENDENCIA S38', 'TENDENCIA S372', 'TENDENCIA S36', 
@@ -179,7 +181,16 @@ if not df_cuant.empty and not df_cual_cots.empty and 'Nombres' in df_cuant.colum
 else:
     df_master = df_cuant.copy()
 
-col_meta = 'META' if 'META' in df_master.columns else None
+# --- MODIFICACIÓN 3: Búsqueda flexible del nombre de la columna Meta ---
+if 'META' in df_master.columns: 
+    col_meta = 'META'
+elif 'METAS' in df_master.columns: 
+    col_meta = 'METAS'
+elif 'META GLOBAL' in df_master.columns: 
+    col_meta = 'META GLOBAL'
+else: 
+    col_meta = None
+
 if 'CONVENCIDOS A LA FECHA' in df_master.columns: col_conv = 'CONVENCIDOS A LA FECHA'
 elif 'SEPTIEMBRE 01-20' in df_master.columns: col_conv = 'SEPTIEMBRE 01-20'
 elif 'CONVENCIDOS' in df_master.columns: col_conv = 'CONVENCIDOS'
